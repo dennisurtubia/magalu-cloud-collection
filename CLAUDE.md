@@ -35,13 +35,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development and testing
 
 - `ansible-test` only runs from a checkout whose physical path ends in `ansible_collections/dennisurtubia/magalu_cloud/`. It resolves the working directory with `os.getcwd()`, so reaching the checkout through a symlink at that path is not enough.
-- Run `ansible-test` with `--docker default` when a container runtime is available, otherwise with `--venv`.
+- `ansible-core` and `ansible-lint` are installed globally with `uv tool install`. They are not project dependencies, and the repository has no Python project files.
+- Run `ansible-test` with `--docker default` when a container runtime is available, otherwise with `--venv`. Unit-test requirements (pytest, pytest-mock) come from `ansible-test`.
 - Never run integration tests without explicit approval: they create real, billable Magalu Cloud resources.
 
 ```bash
 ansible-galaxy collection build   # dennisurtubia-magalu_cloud-<version>.tar.gz
-ansible-test sanity --docker default -v
-ansible-test sanity --docker default -v --test validate-modules plugins/modules/<module>.py
-ansible-test units --docker default -v
-ansible-test units --docker default -v tests/unit/plugins/modules/test_<module>.py
+ansible-lint
+ansible-test sanity --venv -v
+ansible-test sanity --venv -v --test validate-modules plugins/modules/<module>.py
+ansible-test units --venv -v
+ansible-test units --venv -v tests/unit/plugins/modules/test_<module>.py
 ```
