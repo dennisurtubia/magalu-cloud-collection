@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from ansible.module_utils.testing import patch_module_args
+from ansible_collections.dennisurtubia.magalu_cloud.plugins.module_utils import database
 from ansible_collections.dennisurtubia.magalu_cloud.plugins.modules import database_instance
 
 API_KEY = "test-api-key-0a1b2c3d"
@@ -47,7 +48,7 @@ API_ERRORS = {
 
 @pytest.fixture
 def fetch_url(mocker):
-    return mocker.patch.object(database_instance, "fetch_url")
+    return mocker.patch.object(database, "fetch_url")
 
 
 def http_response(status, body):
