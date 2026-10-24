@@ -19,22 +19,9 @@ description:
     same O(name) already exists.
 author:
   - Dennis Urtubia (@dennisurtubia)
+extends_documentation_fragment:
+  - dennisurtubia.magalu_cloud.database
 options:
-  api_key:
-    description:
-      - Magalu Cloud API key, sent in the C(x-api-key) header.
-      - The key needs permission to create database resources.
-      - If not set, the value of the E(MAGALU_CLOUD_API_KEY) environment variable is used. This variable name is a convention
-        of this collection, not of Magalu Cloud.
-    type: str
-    required: true
-  region:
-    description:
-      - Magalu Cloud region where the instance is created. It selects the API endpoint
-        C(https://api.magalu.cloud/<region>/database).
-    type: str
-    required: true
-    choices: [br-se1, br-ne1]
   name:
     description:
       - Name of the instance. The API accepts at most 100 characters.
@@ -109,27 +96,16 @@ options:
       - Availability zone of the instance. The API documents C(br-se1-a), C(br-se1-b), C(br-se1-c), C(br-ne1-a), and
         C(br-ne1-b).
     type: str
-  timeout:
-    description:
-      - Number of seconds to wait for the API to respond to the create request.
-    type: int
-    default: 30
 notes:
+  - The API key needs permission to create database instances.
   - Supports check mode. In check mode the module sends no request and reports a change, because every real run creates an
     instance.
   - The module sends at most one request per run and never retries it. If the connection fails or times out, the instance may
     still have been created. Check the Magalu Cloud console or the API before running the task again.
   - The module does not check whether an instance with the same name already exists. The DBaaS API documents no idempotency
     mechanism and no name uniqueness.
-  - The DBaaS API reference lists the northeast server as C(br-ne-1), while the Magalu Cloud API authentication guide uses
-    C(br-ne1). The module follows the authentication guide.
 seealso:
-  - name: DBaaS API reference
-    description: Official Magalu Cloud DBaaS API documentation, including the create instance operation.
-    link: https://docs.magalu.cloud/api/database
-  - name: Magalu Cloud API authentication
-    description: How to authenticate to Magalu Cloud APIs with an API key.
-    link: https://docs.magalu.cloud/docs/devops-tools/apis/auth
+  - module: dennisurtubia.magalu_cloud.database_instance_info
 """
 
 EXAMPLES = r"""
@@ -214,15 +190,16 @@ body:
   type: str
 """
 
-import json
-
-from ansible.module_utils.basic import AnsibleModule, env_fallback
+from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.common.text.converters import to_text
-from ansible.module_utils.urls import fetch_url
+from ansible_collections.dennisurtubia.magalu_cloud.plugins.module_utils.database import (
+    argument_spec,
+    fail_with_api_error,
+    parse_json,
+    request,
+)
 
 # Contract: POST /v2/instances in the DBaaS API spec 2.33.3, https://docs.magalu.cloud/redocusaurus/dbaas-openapi.yaml
-# Authentication with the x-api-key header: https://docs.magalu.cloud/docs/devops-tools/apis/auth
-API_URL = "https://api.magalu.cloud/{region}/database/v2/instances"
 
 # Options sent to the API as fields of the request body, under the same names.
 BODY_OPTIONS = (
@@ -255,8 +232,7 @@ class DatabaseInstance:
     def define_module(cls):
         return AnsibleModule(
             argument_spec=dict(
-                api_key=dict(type="str", required=True, no_log=True, fallback=(env_fallback, ["MAGALU_CLOUD_API_KEY"])),
-                region=dict(type="str", required=True, choices=["br-se1", "br-ne1"]),
+                argument_spec(),
                 name=dict(type="str", required=True),
                 engine_id=dict(type="str", required=True),
                 instance_type_id=dict(type="str", required=True),
@@ -276,7 +252,6 @@ class DatabaseInstance:
                 backup_retention_days=dict(type="int"),
                 backup_start_at=dict(type="str"),
                 availability_zone=dict(type="str"),
-                timeout=dict(type="int", default=30),
             ),
             supports_check_mode=True,
         )
@@ -284,7 +259,7 @@ class DatabaseInstance:
     def create(self):
         if self.module.check_mode:
             return dict(changed=True)
-        response, info = self._request(self._build_body())
+        response, info = request(self.module, "/instances", method="POST", body=self._build_body())
         return self._handle_response(response, info)
 
     def _build_body(self):
@@ -293,22 +268,6 @@ class DatabaseInstance:
         body = {key: params[key] for key in BODY_OPTIONS if params[key] is not None}
         body["volume"] = {key: value for key, value in params["volume"].items() if value is not None}
         return body
-
-    def _request(self, body):
-        return fetch_url(
-            self.module,
-            API_URL.format(region=self.module.params["region"]),
-            data=json.dumps(body),
-            headers={
-                "x-api-key": self.module.params["api_key"],
-                "Content-Type": "application/json",
-                "Accept": "application/json",
-            },
-            method="POST",
-            timeout=self.module.params["timeout"],
-            # Keep the API key off any redirected request.
-            unredirected_headers=["x-api-key"],
-        )
 
     def _handle_response(self, response, info):
         status = info["status"]
@@ -321,7 +280,7 @@ class DatabaseInstance:
             )
 
         if status >= 400:
-            self._fail_with_api_error(status, to_text(info.get("body") or b"", errors="surrogate_or_replace"))
+            fail_with_api_error(self.module, "create database instance", info)
 
         if status != 202:
             self.module.fail_json(
@@ -330,7 +289,7 @@ class DatabaseInstance:
                 status=status,
             )
 
-        instance = self._parse_json(to_text(response.read(), errors="surrogate_or_replace"))
+        instance = parse_json(to_text(response.read(), errors="surrogate_or_replace"))
         if not isinstance(instance, dict) or not instance.get("id"):
             self.module.fail_json(
                 msg="The API accepted the creation request but its response has no instance ID. {0}".format(MAY_HAVE_BEEN_CREATED),
@@ -338,26 +297,6 @@ class DatabaseInstance:
             )
 
         return dict(changed=True, instance=dict(id=instance["id"]))
-
-    def _fail_with_api_error(self, status, raw):
-        error = self._parse_json(raw)
-        if isinstance(error, dict):
-            message = error.get("message")
-            detail = ": {0}".format(message) if message else ""
-            self.module.fail_json(
-                msg="Failed to create database instance: HTTP {0}{1}".format(status, detail),
-                changed=False,
-                status=status,
-                error=error,
-            )
-        self.module.fail_json(msg="Failed to create database instance: HTTP {0}".format(status), changed=False, status=status, body=raw)
-
-    @staticmethod
-    def _parse_json(raw):
-        try:
-            return json.loads(raw)
-        except ValueError:
-            return None
 
 
 def main():
