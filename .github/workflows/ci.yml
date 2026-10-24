@@ -1,0 +1,124 @@
+---
+# Sanity, unit, lint, and build/import checks for the collection.
+# Integration tests are intentionally absent: they create real, billable
+# Magalu Cloud resources and must never run without explicit approval.
+name: CI
+
+'on':
+  push:
+    branches:
+      - main
+  pull_request:
+  # Run daily so that new ansible-test checks in each ansible-core branch are
+  # caught even when the collection itself does not change.
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: >-
+    ${{ github.workflow }}-${{
+      github.event.pull_request.number || github.sha
+    }}
+  cancel-in-progress: true
+
+jobs:
+  sanity:
+    name: Sanity (Ⓐ${{ matrix.ansible }})
+    runs-on: ubuntu-latest
+    # devel may add sanity tests before the collection adapts, so it does not
+    # block merges.
+    continue-on-error: ${{ matrix.ansible == 'devel' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep in sync with requires_ansible in meta/runtime.yml and the
+        # ansible-core support matrix:
+        # https://docs.ansible.com/ansible/latest/reference_appendices/release_and_maintenance.html
+        ansible:
+          - stable-2.19
+          - stable-2.20
+          - stable-2.21
+          - devel
+    steps:
+      # Without target-python-version, ansible-test runs against every Python
+      # version that the ansible-core branch supports.
+      - name: Perform sanity testing
+        uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3 # v1.18.0
+        with:
+          ansible-core-version: ${{ matrix.ansible }}
+          testing-type: sanity
+
+  units:
+    name: Units (Ⓐ${{ matrix.ansible }})
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.ansible == 'devel' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        ansible:
+          - stable-2.19
+          - stable-2.20
+          - stable-2.21
+          - devel
+    steps:
+      - name: Perform unit testing
+        uses: ansible-community/ansible-test-gh-action@6ded727edb598e670ac056a8e680ca4050bac0a3 # v1.18.0
+        with:
+          ansible-core-version: ${{ matrix.ansible }}
+          testing-type: units
+          coverage: never
+
+  ansible-lint:
+    name: ansible-lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the collection
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run ansible-lint
+        uses: ansible/ansible-lint@9bce2bfb8f4a984e6b13767bc0d6bf0a49492164 # v26.10.1
+
+  build-import:
+    name: Build and Galaxy import
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the collection
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install galaxy-importer
+        run: python -m pip install galaxy-importer
+
+      - name: Build the collection
+        run: ansible-galaxy collection build --output-path build/
+
+      - name: Run the Galaxy importer
+        run: python -m galaxy_importer.main build/*.tar.gz
+
+  all-green:
+    name: all-green
+    if: always()
+    needs:
+      - sanity
+      - units
+      - ansible-lint
+      - build-import
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check that all required jobs succeeded
+        uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # v1.3.0
+        with:
+          jobs: ${{ toJSON(needs) }}

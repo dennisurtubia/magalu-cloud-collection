@@ -1,0 +1,26 @@
+- hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: List all instances
+      dennisurtubia.magalu_cloud.database_instance_info:
+        region: br-se1
+      register: all_dbs
+
+    - ansible.builtin.debug:
+        var: all_dbs.instances
+
+    - name: Filter by status
+      dennisurtubia.magalu_cloud.database_instance_info:
+        region: br-se1
+        status: ACTIVE
+      register: active_dbs
+
+    - name: Look up a nonexistent ID (should return an empty list without failing)
+      dennisurtubia.magalu_cloud.database_instance_info:
+        region: br-se1
+        id: 742b4dca-5946-4a43-98d7-ac979d6fcbe1
+      register: missing
+
+    - ansible.builtin.assert:
+        that: missing.instances | length == 0
