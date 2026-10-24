@@ -1,0 +1,67 @@
+---
+# Validates the changelog and requires a fragment in pull requests that change
+# existing content under plugins/. New plugins do not need a fragment because
+# antsibull-changelog detects them from version_added at release time.
+# The skip-changelog label disables the fragment requirement.
+name: Changelog
+
+'on':
+  pull_request:
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - labeled
+      - unlabeled
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  changelog:
+    name: changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the collection
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.13'
+
+      - name: Install antsibull-changelog
+        run: python -m pip install antsibull-changelog
+
+      - name: Lint the changelog
+        run: antsibull-changelog lint
+
+      - name: Require a changelog fragment
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'skip-changelog') }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          changed_plugins=$(git diff --name-only --diff-filter=MDR "${BASE_SHA}...HEAD" -- plugins/)
+          if [ -z "${changed_plugins}" ]; then
+            echo "No existing plugin content changed; no fragment required."
+            exit 0
+          fi
+
+          new_fragments=$(git diff --name-only --diff-filter=A "${BASE_SHA}...HEAD" -- changelogs/fragments/ \
+            | grep -E '\.ya?ml$' || true)
+          if [ -z "${new_fragments}" ]; then
+            echo "::error::This pull request changes existing content under plugins/:"
+            echo "${changed_plugins}"
+            echo "::error::Add a fragment to changelogs/fragments/ or apply the skip-changelog label."
+            exit 1
+          fi
+
+          echo "Changelog fragments added:"
+          echo "${new_fragments}"

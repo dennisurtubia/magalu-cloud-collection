@@ -38,6 +38,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `ansible-core` and `ansible-lint` are installed globally with `uv tool install`. They are not project dependencies, and the repository has no Python project files.
 - Run `ansible-test` with `--docker default` when a container runtime is available, otherwise with `--venv`. Unit-test requirements (pytest, pytest-mock) come from `ansible-test`.
 - Never run integration tests without explicit approval: they create real, billable Magalu Cloud resources.
+- Pull requests that change existing content under `plugins/` need a fragment in `changelogs/fragments/` (antsibull-changelog format). New modules are detected from `version_added` and need none.
+- Releases are cut by pushing a tag equal to the `galaxy.yml` version after running `antsibull-changelog release`. The release workflow publishes to Ansible Galaxy only after approval in the `release` environment.
 
 ```bash
 ansible-galaxy collection build   # dennisurtubia-magalu_cloud-<version>.tar.gz
@@ -46,4 +48,5 @@ ansible-test sanity --venv -v
 ansible-test sanity --venv -v --test validate-modules plugins/modules/<module>.py
 ansible-test units --venv -v
 ansible-test units --venv -v tests/unit/plugins/modules/test_<module>.py
+antsibull-changelog lint
 ```
